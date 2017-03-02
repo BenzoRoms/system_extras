@@ -83,7 +83,7 @@ struct selabel_handle;
 
 #endif
 
-struct f2fs_configuration config;
+extern struct f2fs_configuration *cp;
 struct sparse_file *f2fs_sparse_file;
 
 struct buf_item {
@@ -94,12 +94,32 @@ struct buf_item {
 
 struct buf_item *buf_list;
 
+static int __get_device_fd(__u64 *offset)
+{
+	__u64 blk_addr = *offset >> F2FS_BLKSIZE_BITS;
+	int i;
+
+	for (i = 0; i < cp->ndevs; i++) {
+		if (cp->devices[i].start_blkaddr <= blk_addr &&
+				cp->devices[i].end_blkaddr >= blk_addr) {
+			*offset -=
+				cp->devices[i].start_blkaddr << F2FS_BLKSIZE_BITS;
+			return cp->devices[i].fd;
+		}
+	}
+	return -1;
+}
+
 static int dev_write_fd(void *buf, __u64 offset, size_t len)
 {
-        int fd;
+	int fd = __get_device_fd(&offset);
+
+	if (fd < 0)
+		return fd;
 
 	if (lseek64(fd, (off64_t)offset, SEEK_SET) < 0)
 		return -1;
+
 	ssize_t written = write(fd, buf, len);
 	if (written == -1)
 		return -1;
@@ -164,9 +184,7 @@ int dev_read(void  *buf, __u64 offset, size_t len)
 
 int dev_write(void *buf, __u64 offset, size_t len)
 {
-        int fd;
-
-	if (fd >= 0) {
+	if (__get_device_fd(&offset) >= 0) {
 		return dev_write_fd(buf, offset, len);
 	} else {
 		return dev_write_sparse(buf, offset, len);
@@ -177,9 +195,7 @@ int dev_write(void *buf, __u64 offset, size_t len)
 int dev_fill(void *buf, __u64 offset, size_t len)
 {
 	int ret;
-        int fd;
-
-	if (fd >= 0) {
+	if (__get_device_fd(&offset) >= 0) {
 		return dev_write_fd(buf, offset, len);
 	}
         // sparse file fills with zero by default.
